@@ -104,13 +104,14 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    private void createSampleRecordSetAndSyncWithCognito() {
-        Dataset dataset = mSyncClient.openOrCreateDataset("myDataset");
-        dataset.put("myKey", "myValue");
+    private void addDataToSampleDataset(String key, String value) {
+        Dataset dataset = mSyncClient.openOrCreateDataset("SampleDataset");
+        dataset.put(key, value);
         dataset.synchronize(new DefaultSyncCallback() {
             @Override
             public void onSuccess(Dataset dataset, List newRecords) {
-                Log.i(TAG, "createSampleRecordSetAndSyncWithCognito onSuccess");
+                Log.i(TAG, "addDataToSampleDataset onSuccess");
+                Log.i(TAG, dataset.toString());
             }
         });
     }
@@ -162,6 +163,8 @@ public class MainActivity extends AppCompatActivity {
     private void addFacebookLoginToCognito(AccessToken facebookAccessToken) {
         Log.i(TAG, "addFacebookLoginToCognito");
         Log.i(TAG, "AccessToken: " + facebookAccessToken.getToken());
+
+        addDataToSampleDataset("facebook_token", facebookAccessToken.getToken()); // please don't do this in a production app...
 
         Map<String, String> logins = mCredentialsProvider.getLogins();
         logins.put("graph.facebook.com", facebookAccessToken.getToken());
@@ -220,6 +223,8 @@ public class MainActivity extends AppCompatActivity {
     private void addGoogleLoginToCognito(String token) throws GoogleAuthException, IOException {
         Log.i(TAG, "addGoogleLoginToCognito");
         Log.i(TAG, "token: " + token);
+
+        addDataToSampleDataset("google_token", token); // please don't do this in a production app...
 
         Map<String, String> logins = mCredentialsProvider.getLogins();
         logins.put("accounts.google.com", token);
