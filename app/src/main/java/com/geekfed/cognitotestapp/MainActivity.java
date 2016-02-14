@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.view.View;
 
 import com.amazonaws.auth.CognitoCachingCredentialsProvider;
 import com.amazonaws.mobileconnectors.cognito.CognitoSyncManager;
@@ -16,8 +17,15 @@ import com.facebook.FacebookCallback;
 import com.facebook.FacebookException;
 import com.facebook.login.LoginResult;
 import com.facebook.login.widget.LoginButton;
+import com.google.android.gms.auth.GoogleAuthException;
+import com.google.android.gms.auth.api.Auth;
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
+import com.google.android.gms.auth.api.signin.GoogleSignInResult;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.SignInButton;
+import com.google.android.gms.common.api.GoogleApiClient;
 
-import java.util.HashMap;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -29,7 +37,13 @@ public class MainActivity extends AppCompatActivity {
 
     private CognitoSyncManager mSyncClient;
 
-    private LoginButton fbLogin;
+    private GoogleApiClient mGoogleApiClient;
+
+    private GoogleSignInOptions mGoogleSignInOptions;
+
+    private SignInButton gmsLogin;
+
+    private static final int RC_SIGN_IN = 9001;
 
     private static String TAG = MainActivity.class.getSimpleName();
 
@@ -41,6 +55,7 @@ public class MainActivity extends AppCompatActivity {
         initCognitoCredentialsProvider();
         initCognitoSyncClient();
         initFacebookLogin();
+        initGoogleLogin();
 
         outputCognitoCredentials();
     }
@@ -48,7 +63,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        mFacebookCallbackManager.onActivityResult(requestCode, resultCode, data);
+        if(requestCode == RC_SIGN_IN) {
+            GoogleSignInResult result = Auth.GoogleSignInApi.getSignInResultFromIntent(data);
+            handleGoogleSignInResult(result);
+        } else {
+            mFacebookCallbackManager.onActivityResult(requestCode, resultCode, data);
+        }
     }
 
     // -- AWS Cognito Related Methods
@@ -59,6 +79,8 @@ public class MainActivity extends AppCompatActivity {
                 getString(R.string.AWS_COGNITO_IDENTITY_POOL_ID), // YOUR Identity Pool ID from AWS Cognito
                 Regions.US_EAST_1 // Region
         );
+
+        Log.i(TAG, "mCredentialsProvider: " + mCredentialsProvider.toString());
     }
 
     private void initCognitoSyncClient() {
@@ -67,12 +89,19 @@ public class MainActivity extends AppCompatActivity {
                 Regions.US_EAST_1,
                 mCredentialsProvider
         );
+
+        Log.i(TAG, "mSyncClient: " + mSyncClient.toString());
     }
 
     private void outputCognitoCredentials() {
         Log.i(TAG, "outputCognitoCredentials");
-        Log.i(TAG, "getCachedIdentityId: " + mCredentialsProvider.getCachedIdentityId());
-        Log.i(TAG, "getIdentityId: " + mCredentialsProvider.getIdentityId());
+        new Thread(new Runnable() {
+           @Override
+            public void run() {
+               Log.i(TAG, "getCachedIdentityId: " + mCredentialsProvider.getCachedIdentityId());
+               Log.i(TAG, "getIdentityId: " + mCredentialsProvider.getIdentityId());
+           }
+        }).start();
     }
 
     private void createSampleRecordSetAndSyncWithCognito() {
@@ -106,7 +135,7 @@ public class MainActivity extends AppCompatActivity {
             mFacebookCallbackManager = CallbackManager.Factory.create();
         }
 
-        fbLogin = (LoginButton) findViewById(R.id.fbLogin);
+        LoginButton fbLogin = (LoginButton) findViewById(R.id.fbLogin);
         fbLogin.setReadPermissions("user_friends");
 
         fbLogin.registerCallback(mFacebookCallbackManager, new FacebookCallback<LoginResult>() {
@@ -134,12 +163,70 @@ public class MainActivity extends AppCompatActivity {
         Log.i(TAG, "addFacebookLoginToCognito");
         Log.i(TAG, "AccessToken: " + facebookAccessToken.getToken());
 
-        Map<String, String> logins = new HashMap<>();
+        Map<String, String> logins = mCredentialsProvider.getLogins();
         logins.put("graph.facebook.com", facebookAccessToken.getToken());
-
         Log.i(TAG, "logins: " + logins.toString());
 
         mCredentialsProvider.setLogins(logins);
         refreshCredentialsProvider();
     }
+
+    // -- Google Sign-In Related Methods
+    private void initGoogleLogin() {
+        if(mGoogleSignInOptions == null) {
+            mGoogleSignInOptions = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                    .requestIdToken(getString(R.string.GOOGLE_SERVER_CLIENT_ID))
+                    .build();
+        }
+
+        if(mGoogleApiClient == null) {
+            mGoogleApiClient = new GoogleApiClient.Builder(this)
+                .enableAutoManage(this, new GoogleApiClient.OnConnectionFailedListener() {
+                    @Override
+                    public void onConnectionFailed(ConnectionResult connectionResult) {
+
+                    }
+                })
+                .addApi(Auth.GOOGLE_SIGN_IN_API, mGoogleSignInOptions)
+                .build();
+        }
+
+        gmsLogin = (SignInButton) findViewById(R.id.gmsLogin);
+
+        gmsLogin.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent signInIntent = Auth.GoogleSignInApi.getSignInIntent(mGoogleApiClient);
+                startActivityForResult(signInIntent, RC_SIGN_IN);
+            }
+        });
+    }
+
+    private void handleGoogleSignInResult(GoogleSignInResult result) {
+        Log.i(TAG, "handleSignInResult: " + result.isSuccess());
+        if(result.isSuccess()) {
+            try {
+                if(result.getSignInAccount() != null) {
+                    addGoogleLoginToCognito(result.getSignInAccount().getIdToken());
+                } else {
+                    Log.i(TAG, "result.getSignInAccount is null.");
+                }
+            } catch (GoogleAuthException | IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void addGoogleLoginToCognito(String token) throws GoogleAuthException, IOException {
+        Log.i(TAG, "addGoogleLoginToCognito");
+        Log.i(TAG, "token: " + token);
+
+        Map<String, String> logins = mCredentialsProvider.getLogins();
+        logins.put("accounts.google.com", token);
+        Log.i(TAG, "logins: " + logins.toString());
+
+        mCredentialsProvider.setLogins(logins);
+        refreshCredentialsProvider();
+    }
+
 }
